@@ -3935,6 +3935,173 @@ Function InstallFaxAndScan {
 	Get-WindowsCapability -Online | Where-Object { $_.Name -like "Print.Fax.Scan*" } | Add-WindowsCapability -Online | Out-Null
 }
 
+<#
+	Download and install the Linux kernel update package
+	Set WSL 2 as the default version when installing a new Linux distribution
+	Run the function only after WSL installed and PC restart
+
+	Скачать и установить пакет обновления ядра Linux
+	Установить WSL 2 как версию по умолчанию при установке нового дистрибутива Linux
+	Выполните функцию только после установки WSL и перезагрузки ПК
+
+	https://github.com/microsoft/WSL/issues/5437
+#>
+Function SetupWSL
+{
+	try
+	{
+		if ((Invoke-WebRequest -Uri https://www.google.com -UseBasicParsing -DisableKeepAlive -Method Head).StatusDescription)
+		{
+			if ($RU)
+			{
+				Write-Verbose "Скачивается пакет обновления ядра Linux... ~14 МБ" -Verbose
+			}
+			else
+			{
+				Write-Verbose "Downloading the Linux kernel update package... ~14 MB" -Verbose
+			}
+
+			[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+			$DownloadsFolder = Get-ItemPropertyValue -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" -Name "{374DE290-123F-4565-9164-39C4925E467B}"
+			$Parameters = @{
+				Uri = "https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
+				OutFile = "$DownloadsFolder\wsl_update_x64.msi"
+				Verbose = [switch]::Present
+			}
+			Invoke-WebRequest @Parameters
+
+			if ($RU)
+			{
+				Write-Verbose "Установка пакета обновления ядра Linux..." -Verbose
+			}
+			else
+			{
+				Write-Verbose "Installing the Linux kernel update package..." -Verbose
+			}
+			Start-Process -FilePath "$DownloadsFolder\wsl_update_x64.msi" -ArgumentList "/passive" -Wait
+			Remove-Item -Path "$DownloadsFolder\wsl_update_x64.msi" -Force
+		}
+	}
+	catch
+	{
+		if ($Global:Error.Exception.Status -eq "NameResolutionFailure")
+		{
+			if ($RU)
+			{
+				Write-Warning -Message "Отсутствует интернет-соединение"
+			}
+			else
+			{
+				Write-Warning -Message "No Internet connection"
+			}
+		}
+	}
+
+	<#
+		Set WSL 2 as the default architecture when installing a new Linux distribution
+		To receive kernel updates, enable the Windows Update setting: 'Receive updates for other Microsoft products when you update Windows'
+
+		Установить WSL 2 как архитектуру по умолчанию при установке нового дистрибутива Linux
+		Чтобы получать обновления ядра, включите параметр Центра обновления Windows: "Получение обновлений для других продуктов Майкрософт при обновлении Windows"
+	#>
+	if ((Get-Package -Name "Windows Subsystem for Linux Update" -ProviderName msi -Force).Status -eq "Installed")
+	{
+		try
+		{
+			wsl --set-default-version 2
+		}
+		catch
+		{
+			if ($RU)
+			{
+				Write-Warning -Message "Перезагрузите ПК и выполните`nwsl --set-default-version 2"
+			}
+			else
+			{
+				Write-Warning -Message "Restart PC and run`nwsl --set-default-version 2"
+			}
+		}
+	}
+	else
+	{
+		if ($RU)
+		{
+			Write-Warning -Message "Пакет обновления ядра Linux не установлен"
+		}
+		else
+		{
+			Write-Warning -Message "Windows Subsystem for Linux Update is not installed"
+		}
+	}
+}
+
+<#
+	Disable swap file in WSL
+	Use only if the %TEMP% environment variable path changed
+
+	Отключить файл подкачки в WSL
+	Используйте только в случае, если изменился путь переменной среды для %TEMP%
+
+	https://github.com/microsoft/WSL/issues/5437
+#>
+Function DisableWSLSwap
+{
+	if ((Get-ItemPropertyValue -Path HKCU:\Environment -Name TEMP) -ne "$env:LOCALAPPDATA\Temp")
+	{
+		if (Test-Path -Path "$env:USERPROFILE\.wslconfig")
+		{
+			$String = Get-Content -Path "$env:USERPROFILE\.wslconfig" | Select-String -Pattern "swap=" -SimpleMatch
+			if ($String)
+			{
+				(Get-Content -Path "$env:USERPROFILE\.wslconfig").Replace("swap=1", "swap=0") | Set-Content -Path "$env:USERPROFILE\.wslconfig" -Force
+			}
+			else
+			{
+				Add-Content -Path "$env:USERPROFILE\.wslconfig" -Value "`r`nswap=0" -Force
+			}
+		}
+		else
+		{
+			$WSLConfig = @"
+[wsl2]
+swap=0
+"@
+			# Saving .wslconfig in UTF-8 encoding
+			# Сохраняем .wslconfig в кодировке UTF-8
+			Set-Content -Path "$env:USERPROFILE\.wslconfig" -Value $WSLConfig -Force
+		}
+	}
+}
+
+# Enable swap file in WSL
+# Включить файл подкачки в WSL
+# https://github.com/microsoft/WSL/issues/5437
+Function EnableWSLSwap
+{
+	if (Test-Path -Path "$env:USERPROFILE\.wslconfig")
+	{
+		$String = Get-Content -Path "$env:USERPROFILE\.wslconfig" | Select-String -Pattern "swap=" -SimpleMatch
+		if ($String)
+		{
+			(Get-Content -Path "$env:USERPROFILE\.wslconfig").Replace("swap=0", "swap=1") | Set-Content -Path "$env:USERPROFILE\.wslconfig" -Force
+		}
+		else
+		{
+			Add-Content -Path "$env:USERPROFILE\.wslconfig" -Value "`r`nswap=1" -Force
+		}
+	}
+	else
+	{
+		$WSLConfig = @"
+[wsl2]
+swap=1
+"@
+		# Saving .wslconfig in UTF-8 encoding
+		# Сохраняем .wslconfig в кодировке UTF-8
+		Set-Content -Path "$env:USERPROFILE\.wslconfig" -Value $WSLConfig -Force
+	}
+}
+
 ##########
 #endregion Application Tweaks
 ##########
